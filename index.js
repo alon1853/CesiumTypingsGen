@@ -1,35 +1,41 @@
 const fs = require('fs');
-const request = require('sync-request');
+const request = require('request');
 const cheerio = require('cheerio');
+
+const CESIUM_DOCUMENTATION_URL = 'https://cesiumjs.org/Cesium/Build/Documentation/';
+const classesMap = new Map();
+let numberOfClasess = 0;
 
 Generate();
 
 function Generate() {
+
     console.log('Loading classes names..');
-    const body = HttpRequest('https://cesiumjs.org/Cesium/Build/Documentation/');
-    let fileContent = '';
-    const $ = cheerio.load(body.toString());
+    HttpRequest(CESIUM_DOCUMENTATION_URL, (body) => {
+        const $ = cheerio.load(body);
 
-    console.log('Starting to build classes:\n')
-    const classesNames = GetClassesNames($);
-    classesNames.forEach((name) => {
-        if (name[0].toUpperCase() === name[0] && (name[0] === 'A' || name[0] === 'B')) {
-            fileContent += '\n\tclass ' + name + ' {\n';
-
-            const classData = LoadClassData(name);
-            fileContent += classData;
-
-            fileContent += '\t}\n';
-        }
+        console.log('Starting to build classes:');
+        console.log('---------------------------------------------------------------------');
+        const classesNames = GetClassesNames($);
+        classesNames.forEach((name) => {
+            if (name[0] === name[0].toUpperCase()) {
+                numberOfClasess++;
+                LoadClassData(name);
+            }
+        });
     });
-
-    WriteToFile(fileContent);
 }
 
-function HttpRequest(url) {
-    const result = request('GET', url);
+function HttpRequest(url, callback) {
+    request(url, (err, res, body) => {
+        if (err) {
+            console.log(err);
 
-    return result.getBody();
+            return;
+        }
+
+        callback(body);
+    });
 }
 
 function GetClassesNames($) {
@@ -43,18 +49,26 @@ function GetClassesNames($) {
 }
 
 function LoadClassData(name) {
-    console.log('Building class ' + name + '..');
+    HttpRequest(CESIUM_DOCUMENTATION_URL + name + '.html', (body) => {
+        console.log('Building class ' + name + '..');
 
-    const body = HttpRequest('https://cesiumjs.org/Cesium/Build/Documentation/' + name + '.html');
-    const $ = cheerio.load(body.toString());
-    
-    let result = '';
-    result += ExtractClassDataMembers($);
-    result += ExtractClassConstructor($);
-    result += ExtractClassMethods($);
-    result += ExtractTypeDefinitions($);
+        const $ = cheerio.load(body);
+        let classContent = '';
 
-    return result;
+        classContent += '\n\tclass ' + name + ' {\n';
+        classContent += ExtractClassDataMembers($);
+        classContent += ExtractClassConstructor($);
+        classContent += ExtractClassMethods($);
+        classContent += ExtractTypeDefinitions($);    
+        classContent += '\t}\n';
+
+        classesMap.set(name, classContent);
+
+        if (classesMap.size === numberOfClasess) {
+            const clasessContent = PrepareClasses();
+            WriteToFile(clasessContent);
+        }
+    });
 }
 
 function ExtractParamsFromTable($, table) {
@@ -132,12 +146,16 @@ function ExtractClassMethods($) {
                 const element = $(dt).find('h4.name');
                 const table = $(dt).parent().find('dd').eq(i).find('table.params');
                 const methodParams = ExtractParamsFromTable($, table);
-                let methodName = $(element).attr('id').replace('.', '') + '(' + methodParams + ')';
-                const returnType = CleanType($(element).find('.returnType').text());
-    
-                methodName += ': ' + ((returnType !== '') ? returnType : 'void');
-    
-                result += '\t\t' + methodName + ';\n';
+                const id = $(element).attr('id');
+
+                if (id) {
+                    const attributes = ExtractAttributes($, element);
+                    let methodName = attributes + id.replace('.', '') + '(' + methodParams + ')';
+                    const returnType = CleanType($(element).find('.returnType').text());
+        
+                    methodName += ': ' + ((returnType !== '') ? returnType : 'void');
+                    result += '\t\t' + methodName + ';\n';
+                }
             });
         }
     });
@@ -154,7 +172,7 @@ function ExtractTypeDefinitions($) {
 function CleanType(type) {
     let result = type;
     result = result.replace(/\./g, '').replace(/\~/g, '.').replace(/\|/g, ' | ').replace(/ \: /g, ': ');
-    result = result.replace(' | undefined', '');
+    // result = result.replace(' | undefined', '');
     result = result.replace('Canvas', 'HTMLCanvasElement');
     result = result.replace(new RegExp('\\bImage\\b'), 'HTMLImageElement');
     result = result.replace('Boolean', 'boolean');
@@ -203,16 +221,27 @@ function ExtractOptional($, element) {
     return result;
 }
 
+function PrepareClasses() {
+    let fileContent = '';
+
+    classesMap.forEach((value, key) => {
+        fileContent += value;
+    });
+
+    return fileContent;
+}
+
 function WriteToFile(content) {
     tmpContent = 'declare module Cesium {\n';
     tmpContent += content;
     tmpContent += '\n}\n\ndeclare module \'cesium\' {\n\texport = Cesium;\n}';
-
+    
     fs.writeFile("index.d.ts", tmpContent, (err) => {
         if (err) {
             return console.log(err);
         }
-
-        console.log("\nThe file was saved!");
+        
+        console.log('---------------------------------------------------------------------');
+        console.log("The file created successfully!");
     });
 }
