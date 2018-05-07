@@ -2,6 +2,8 @@ const fs = require('fs');
 const request = require('request');
 const cheerio = require('cheerio');
 
+const INTERFACE = 'interface';
+const CLASS = 'class';
 const CESIUM_DOCUMENTATION_URL = 'https://cesiumjs.org/Cesium/Build/Documentation/';
 const classesMap = new Map();
 let numberOfClasess = 0;
@@ -21,6 +23,8 @@ function Generate() {
             if (name[0] === name[0].toUpperCase()) {
                 numberOfClasess++;
                 LoadClassData(name);
+            } else {
+                LoadStaticFunctionData(name);
             }
         });
     });
@@ -54,15 +58,20 @@ function LoadClassData(name) {
 
         const $ = cheerio.load(body);
         let classContent = '';
+        let typeDefinitions = '';
+        const prototype = GetClassOrInterfaceTitle($);
 
-        classContent += '\n\tclass ' + name + ' {\n';
+        classContent += '\n\t' + prototype + ' ' + name + ' {\n';
         classContent += ExtractClassDataMembers($);
-        classContent += ExtractClassConstructor($);
+        if (prototype !== INTERFACE) {
+            classContent += ExtractClassConstructor($);
+        }
         classContent += ExtractClassMethods($);
-        classContent += ExtractTypeDefinitions($);    
         classContent += '\t}\n';
 
-        classesMap.set(name, classContent);
+        typeDefinitions = ExtractTypeDefinitions($, name);
+
+        classesMap.set(name, classContent + typeDefinitions);
 
         if (classesMap.size === numberOfClasess) {
             const clasessContent = PrepareClasses();
@@ -71,31 +80,36 @@ function LoadClassData(name) {
     });
 }
 
+function LoadStaticFunctionData(name) {
+
+}
+
 function ExtractParamsFromTable($, table) {
     let result = '';
     let hasOptionsElement = false;
 
-    const params = $(table).find('tbody tr');
-    params.each((i, element) => {
-        const name = $(element).find('.name').first().text();
-        const type = $(element).find('.type').text().trim().replace(/(\r\n\t|\n|\r\t)/gm, "");
-        const description = $(element).find('.description');
+    const tbody = $(table).find('tbody');
+    $(tbody).find('tr').each((i, element) => {
+        if ($(element).parent().get(0) == $(tbody).get(0)) {
+            const name = $(element).find('.name').first().text();
+            const type = $(element).find('.type').text().trim().replace(/(\r\n\t|\n|\r\t)/gm, "");
+            const description = $(element).find('.description');
+            const nestedTable = $(description).children().get(0);
 
-        if (name === '' || type === '') {
-            return;
-        }
+            if (name === '' || type === '') {
+                return;
+            }
 
-        const optional = ExtractOptional($, description);
+            const optional = ExtractOptional($, description);
 
-        if (name === 'options') {
-            result += name + optional + ': { ';
-            hasOptionsElement = true;
-        } else {
-            const param = { name: name, type: CleanType(type) };
+            if (nestedTable) {
+                result += name + optional + ': { ';
+                hasOptionsElement = true;
+                result += ExtractParamsFromTable($, nestedTable);
+            } else {
+                const param = { name: name, type: CleanType(type) };
 
-            result += param.name + optional + ': ' + param.type;
-
-            if (i !== (params.length - 1)) {
+                result += param.name + optional + ': ' + param.type;
                 result += ', ';
             }
         }
@@ -103,6 +117,7 @@ function ExtractParamsFromTable($, table) {
 
     if (hasOptionsElement) {
         result += ' }';
+        result = result.replace('{  }', 'any');
     }
 
     return result;
@@ -152,7 +167,7 @@ function ExtractClassMethods($) {
                     const attributes = ExtractAttributes($, element);
                     let methodName = attributes + id.replace('.', '') + '(' + methodParams + ')';
                     const returnType = CleanType($(element).find('.returnType').text());
-        
+
                     methodName += ': ' + ((returnType !== '') ? returnType : 'void');
                     result += '\t\t' + methodName + ';\n';
                 }
@@ -163,15 +178,50 @@ function ExtractClassMethods($) {
     return result;
 }
 
-function ExtractTypeDefinitions($) {
+function ExtractTypeDefinitions($, name) {
     let result = '';
+
+    $('h3').each((i, h3Element) => {
+        if ($(h3Element).text() === 'Type Definitions') {
+            $(h3Element).next('dl').find('dt').each((i, dt) => {
+                const element = $(dt).find('h4.name');
+                const table = $(dt).parent().find('dd').eq(i).find('table.params');
+                const methodParams = ExtractParamsFromTable($, table);
+                const id = $(element).attr('id');
+
+                if (id) {
+                    const attributes = ExtractAttributes($, element);
+                    let methodName = attributes + id.replace('.', '').replace('~', '');
+                    let returnType = CleanType($(element).find('.returnType').text());
+                    returnType = ((returnType !== '') ? returnType : 'void');
+
+                    result += '\t\t' + 'type ' + methodName + ' = (' + methodParams + ') => ' + returnType + ';\n';
+                }
+            });
+        }
+    });
+
+    if (result !== '') {
+        result = '\n\tmodule ' + name + ' {\n' + result;
+        result += '\t}\n';
+    }
 
     return result;
 }
 
+function GetClassOrInterfaceTitle($) {
+    const description = $('dd').eq(0).find('.description').text();
+
+    if (description.includes(INTERFACE)) {
+        return INTERFACE;
+    }
+
+    return CLASS;
+}
+
 function CleanType(type) {
     let result = type;
-    result = result.replace(/\./g, '').replace(/\~/g, '.').replace(/\|/g, ' | ').replace(/ \: /g, ': ');
+    result = result.replace(/\./g, '').replace(/\~/g, '.').replace(/\|/g, ' | ').replace(/ \: /g, ': ').replace(/\*/g, 'any');
     // result = result.replace(' | undefined', '');
     result = result.replace('Canvas', 'HTMLCanvasElement');
     result = result.replace(new RegExp('\\bImage\\b'), 'HTMLImageElement');
