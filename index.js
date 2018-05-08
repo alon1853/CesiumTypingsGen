@@ -210,6 +210,7 @@ function ExtractTypeDefinitions($, name) {
                     returnType = ((returnType !== '') ? returnType : 'void');
 
                     result += '\t\t' + 'type ' + methodName + ' = (' + methodParams + ') => ' + returnType + ';\n';
+                    result = result.replace(', )', ')');
                 }
             });
         }
@@ -244,9 +245,8 @@ function CleanType(type) {
     result = result.replace('Number', 'number');
     result = result.replace('Object', 'any');
 
-    if (result === ': Array') {
-        result += '<any>';
-    }
+    result = result.replace(new RegExp('\\bArray\\b'), 'Array<any>');
+    result = result.replace('Array<any><', 'Array<');
 
     return result;
 }
