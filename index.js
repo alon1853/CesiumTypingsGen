@@ -21,6 +21,7 @@ function Generate() {
         const classesNames = GetClassesNames($);
         classesNames.forEach((name) => {
             if (name[0] === name[0].toUpperCase()) {
+            // if (name === 'HeightmapTerrainData') {
                 numberOfClasess++;
                 LoadClassData(name);
             } else {
@@ -54,12 +55,12 @@ function GetClassesNames($) {
 
 function LoadClassData(name) {
     HttpRequest(CESIUM_DOCUMENTATION_URL + name + '.html', (body) => {
-        console.log('Building class ' + name + '..');
-
         const $ = cheerio.load(body);
         let classContent = '';
         let typeDefinitions = '';
         const prototype = GetClassOrInterfaceTitle($);
+
+        console.log('Building ' + prototype + ' ' + name + '..');
 
         classContent += '\n\t' + prototype + ' ' + name + ' {\n';
         classContent += ExtractClassDataMembers($);
@@ -86,47 +87,59 @@ function LoadStaticFunctionData(name) {
 
 function ExtractParamsFromTable($, table) {
     let result = '';
-    let hasOptionsElement = false;
+    const optionsSonsArray = new Array();
 
     const tbody = $(table).find('tbody');
     $(tbody).find('tr').each((i, element) => {
-        if ($(element).parent().get(0) == $(tbody).get(0)) {
-            const name = $(element).find('.name').first().text();
-            const type = $(element).find('.type').text().trim().replace(/(\r\n\t|\n|\r\t)/gm, "");
-            const description = $(element).find('.description');
-            const nestedTable = $(description).children().get(0);
+        const name = $(element).find('.name').first().text();
+        const type = $(element).find('.type').first().text().replace(/\s/g, '');
+        const description = $(element).find('.description');
 
-            if (name === '' || type === '') {
-                return;
+        if (name === '' || type === '') {
+            return;
+        }
+
+        const optional = ExtractOptional($, description);
+
+        if ($(description).find('table.params').length > 0) {
+            result += name + optional + ': { ';
+
+            currentChildren = $(description).find('tbody').first().children().length;
+
+            if (optionsSonsArray.length > 0) {
+                optionsSonsArray[optionsSonsArray.length - 1]--;
             }
+            optionsSonsArray.push(currentChildren);
+        } else {
+            const param = { name: name, type: CleanType(type) };
 
-            const optional = ExtractOptional($, description);
+            result += param.name + optional + ': ' + param.type;
+            
+            if (optionsSonsArray.length > 0) {
+                optionsSonsArray[optionsSonsArray.length - 1]--;
 
-            if (nestedTable) {
-                result += name + optional + ': { ';
-                hasOptionsElement = true;
-                result += ExtractParamsFromTable($, nestedTable);
+                if (optionsSonsArray[optionsSonsArray.length - 1] === 0) {
+                    result += ' }, ';
+                    optionsSonsArray.splice(optionsSonsArray.length - 1, 1);
+                } else {
+                    result += ', ';
+                }
             } else {
-                const param = { name: name, type: CleanType(type) };
-
-                result += param.name + optional + ': ' + param.type;
                 result += ', ';
             }
         }
     });
 
-    if (hasOptionsElement) {
-        result += ' }';
-        result = result.replace('{  }', 'any');
-    }
-
+    // result = result.replace('{  }', 'any');
+    
     return result;
 }
 
 function ExtractClassConstructor($) {
     const table = $('dd').eq(0).find('table.params');
     const params = ExtractParamsFromTable($, table);
-    const constructorString = '\n\t\tconstructor(' + params + ');\n\n';
+    let constructorString = '\n\t\tconstructor(' + params + ');\n\n';
+    constructorString = constructorString.replace(', )', ')');
 
     return constructorString;
 }
@@ -166,6 +179,7 @@ function ExtractClassMethods($) {
                 if (id) {
                     const attributes = ExtractAttributes($, element);
                     let methodName = attributes + id.replace('.', '') + '(' + methodParams + ')';
+                    methodName = methodName.replace(', )', ')');
                     const returnType = CleanType($(element).find('.returnType').text());
 
                     methodName += ': ' + ((returnType !== '') ? returnType : 'void');
