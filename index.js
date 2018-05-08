@@ -21,7 +21,7 @@ function Generate() {
         const classesNames = GetClassesNames($);
         classesNames.forEach((name) => {
             if (name[0] === name[0].toUpperCase()) {
-            // if (name === 'HeightmapTerrainData') {
+            // if (name === 'CallbackProperty') {
                 numberOfClasess++;
                 LoadClassData(name);
             } else {
@@ -62,7 +62,11 @@ function LoadClassData(name) {
 
         console.log('Building ' + prototype + ' ' + name + '..');
 
-        classContent += '\n\t' + prototype + ' ' + name + ' {\n';
+        classContent += '\n\t' + prototype + ' ' + name;
+        if (prototype === CLASS) {
+            classContent += ExtractInheritance($);
+        }
+        classContent += ' {\n';
         classContent += ExtractClassDataMembers($);
         if (prototype !== INTERFACE) {
             classContent += ExtractClassConstructor($);
@@ -112,21 +116,18 @@ function ExtractParamsFromTable($, table) {
             optionsSonsArray.push(currentChildren);
         } else {
             const param = { name: name, type: CleanType(type) };
-
             result += param.name + optional + ': ' + param.type;
             
             if (optionsSonsArray.length > 0) {
                 optionsSonsArray[optionsSonsArray.length - 1]--;
 
                 if (optionsSonsArray[optionsSonsArray.length - 1] === 0) {
-                    result += ' }, ';
+                    result += ' }';
                     optionsSonsArray.splice(optionsSonsArray.length - 1, 1);
-                } else {
-                    result += ', ';
                 }
-            } else {
-                result += ', ';
             }
+
+            result += ', ';
         }
     });
 
@@ -142,6 +143,22 @@ function ExtractClassConstructor($) {
     constructorString = constructorString.replace(', )', ')');
 
     return constructorString;
+}
+
+function ExtractInheritance($) {
+    result = '';
+    const description = $('dd').eq(0).find('.description').first();
+
+    if (description.html().includes('A <a href="')) {
+        const a = $(description).find('a').first();
+
+        if (!$(a).attr('href').includes('github')) {
+            const baseClass = $(a).text();
+            result = ' extends ' + baseClass;
+        }
+    }
+
+    return result;
 }
 
 function ExtractClassDataMembers($) {
