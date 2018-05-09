@@ -4,8 +4,10 @@ const cheerio = require('cheerio');
 
 const INTERFACE = 'interface';
 const CLASS = 'class';
+const NOT_READY = 'NOT_READY';
 const CESIUM_DOCUMENTATION_URL = 'https://cesiumjs.org/Cesium/Build/Documentation/';
 const classesMap = new Map();
+const inheritanceList = {};
 let numberOfClasess = 0;
 
 Generate();
@@ -21,7 +23,6 @@ function Generate() {
         const classesNames = GetClassesNames($);
         classesNames.forEach((name) => {
             if (name[0] === name[0].toUpperCase()) {
-            // if (name === 'CallbackProperty') {
                 numberOfClasess++;
                 LoadClassData(name);
             } else {
@@ -54,35 +55,51 @@ function GetClassesNames($) {
 }
 
 function LoadClassData(name) {
-    HttpRequest(CESIUM_DOCUMENTATION_URL + name + '.html', (body) => {
-        const $ = cheerio.load(body);
-        let classContent = '';
-        let typeDefinitions = '';
-        const prototype = GetClassOrInterfaceTitle($);
+    HttpRequest(CESIUM_DOCUMENTATION_URL + name + '.html', (body) => HandleClassData(name, body));
+}
 
-        console.log('Building ' + prototype + ' ' + name + '..');
+function HandleClassData(name, body) {
+    const $ = cheerio.load(body);
+    let classContent = '';
+    let typeDefinitions = '';
+    const prototype = GetClassOrInterfaceTitle($);
 
-        classContent += '\n\t' + prototype + ' ' + name;
-        if (prototype === CLASS) {
-            classContent += ExtractInheritance($);
+    console.log('Building ' + prototype + ' ' + name + '..');
+
+    classContent += '\n\t' + prototype + ' ' + name;
+    if (prototype === CLASS) {
+        inheritanceList[name] = 'extends';
+
+        if (IsInheritance($)) {
+            const resultInheritance = ExtractInheritance($, name);
+
+            if (resultInheritance === NOT_READY) {
+                LoadClassData(name);
+                return;
+            } else {
+                classContent += resultInheritance;
+            }
         }
-        classContent += ' {\n';
-        classContent += ExtractClassDataMembers($);
-        if (prototype !== INTERFACE) {
-            classContent += ExtractClassConstructor($);
-        }
-        classContent += ExtractClassMethods($);
-        classContent += '\t}\n';
+    } else {
+        inheritanceList[name] = 'implements';
+    }
 
-        typeDefinitions = ExtractTypeDefinitions($, name);
+    classContent += ' {\n';
+    classContent += ExtractClassDataMembers($);
+    if (prototype !== INTERFACE) {
+        classContent += ExtractClassConstructor($);
+    }
+    classContent += ExtractClassMethods($);
+    classContent += '\t}\n';
 
-        classesMap.set(name, classContent + typeDefinitions);
+    typeDefinitions = ExtractTypeDefinitions($, name);
 
-        if (classesMap.size === numberOfClasess) {
-            const clasessContent = PrepareClasses();
-            WriteToFile(clasessContent);
-        }
-    });
+    classesMap.set(name, classContent + typeDefinitions);
+
+    if (classesMap.size === numberOfClasess) {
+        const clasessContent = PrepareClasses();
+        WriteToFile(clasessContent);
+    }
 }
 
 function LoadStaticFunctionData(name) {
@@ -145,7 +162,13 @@ function ExtractClassConstructor($) {
     return constructorString;
 }
 
-function ExtractInheritance($) {
+function IsInheritance($) {
+    const description = $('dd').eq(0).find('.description').first();
+
+    return (description.html().includes('A <a href="'));
+}
+
+function ExtractInheritance($, name) {
     result = '';
     const description = $('dd').eq(0).find('.description').first();
 
@@ -154,7 +177,17 @@ function ExtractInheritance($) {
 
         if (!$(a).attr('href').includes('github')) {
             const baseClass = $(a).text();
-            result = ' extends ' + baseClass;
+
+            if (!inheritanceList[baseClass]) {
+                return NOT_READY;
+            }
+
+            if (baseClass === name) {
+                return '';
+            }
+
+            const extendsString = inheritanceList[baseClass];
+            result = ' ' + extendsString + ' ' + baseClass;
         }
     }
 
@@ -261,6 +294,7 @@ function CleanType(type) {
     result = result.replace('String', 'string');
     result = result.replace('Number', 'number');
     result = result.replace('Object', 'any');
+    result = result.replace('function', 'Function');
 
     result = result.replace(new RegExp('\\bArray\\b'), 'Array<any>');
     result = result.replace('Array<any><', 'Array<');
@@ -310,6 +344,15 @@ function PrepareClasses() {
     });
 
     return fileContent;
+}
+
+function sleep(milliseconds) {
+    var start = new Date().getTime();
+    for (var i = 0; i < 1e7; i++) {
+        if ((new Date().getTime() - start) > milliseconds) {
+            break;
+        }
+    }
 }
 
 function WriteToFile(content) {
